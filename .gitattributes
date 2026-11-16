@@ -1,0 +1,4 @@
+# Batch files need CRLF: cmd.exe can misparse labels/goto with LF
+*.bat -text
+# Patches must keep LF so git apply works on any checkout
+*.patch -text
