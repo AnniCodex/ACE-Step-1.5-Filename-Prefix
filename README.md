@@ -20,6 +20,7 @@ Details:
 - `lm_model` is `null` when the LM is not initialized.
 - If the loaded JSON uses models different from the ones currently loaded, a warning asks you to press **Initialize Service** before generating. The dropdowns are already set; the models are not reloaded automatically.
 - When the JSON changes the DiT dropdown, the inference steps and shift from the JSON are kept (they are not reset to the new model's defaults). Changing the DiT dropdown by hand still resets them as before.
+- After loading such a JSON, the next **Initialize Service** also keeps those steps and shift. Later initializations apply the model defaults as before.
 - A model from the JSON that is not in your `checkpoints` folder is not selected, and a warning tells you which one is missing.
 - **Old JSON files** (without these keys) still load as before: prefix and models are left unchanged.
 - Background batches (AutoGen) use the same prefix.
@@ -89,6 +90,7 @@ Patch non ufficiale per l'interfaccia Gradio di ACE-Step 1.5.
 - Il JSON salva anche `filename_prefix`, `dit_model`, `lm_model` (`null` se l'LM non è inizializzato) e `vae_checkpoint`.
 - Caricando un JSON nuovo formato vengono impostati il prefisso e i menu dei modelli DiT / LM / VAE. Se sono diversi da quelli caricati compare un avviso: premere **Initialize Service** prima di generare.
 - Se il JSON cambia il menu DiT, steps e shift del JSON restano (non tornano ai valori predefiniti del nuovo modello). Cambiando il DiT a mano si resettano come prima.
+- Dopo aver caricato un JSON così, anche il successivo **Initialize Service** mantiene steps e shift. Le inizializzazioni seguenti usano i valori predefiniti come prima.
 - I **JSON vecchi** (senza queste chiavi) si caricano come prima: prefisso e modelli restano invariati.
 
 **Installazione**

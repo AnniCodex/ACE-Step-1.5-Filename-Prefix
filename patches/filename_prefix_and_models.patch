@@ -1,9 +1,9 @@
 diff --git a/acestep/ui/gradio/events/results/filename_prefix.py b/acestep/ui/gradio/events/results/filename_prefix.py
 new file mode 100644
-index 0000000..965f7fb
+index 0000000..9caa582
 --- /dev/null
 +++ b/acestep/ui/gradio/events/results/filename_prefix.py
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,178 @@
 +"""[local patch] Filename prefix + model info for saved generations.
 +
 +- The UI textbox ``filename_prefix`` (above the Generate button) is stored
@@ -80,7 +80,7 @@ index 0000000..965f7fb
 +    """Return updates for (filename_prefix, config_path, lm_model_path, vae_checkpoint)
 +    plus a flag: True when the DiT dropdown changes, so the config_path.change
 +    handler keeps the steps/shift just loaded from the JSON."""
-+    skip = (gr.skip(), gr.skip(), gr.skip(), gr.skip(), False)
++    skip = (gr.skip(), gr.skip(), gr.skip(), gr.skip(), False, False)
 +    if file_obj is None:
 +        return skip
 +    try:
@@ -149,7 +149,8 @@ index 0000000..965f7fb
 +            "Modelli diversi: premi 'Initialize Service' prima di generare."
 +        )
 +    dit_changes = isinstance(dit_upd, str) and dit_upd != current_dit
-+    return prefix_upd, dit_upd, lm_upd, vae_upd, dit_changes
++    # second flag: the next Initialize Service keeps steps/shift from the JSON
++    return prefix_upd, dit_upd, lm_upd, vae_upd, dit_changes, bool(to_reinit)
 +
 +
 +def update_model_type_settings_keeping_loaded(config_path, current_mode, keep_loaded_values):
@@ -166,6 +167,21 @@ index 0000000..965f7fb
 +            update.pop("value", None)
 +            updates[index] = update
 +    return (*updates, False)
++
++
++def keep_loaded_values_after_init(init_result, keep_loaded_values):
++    """After a JSON load with other models, Initialize Service keeps steps/shift.
++
++    init_service_wrapper returns status, button, accordion, then the model-type
++    settings (steps at +0, shift at +3). Returns the result plus False (flag reset).
++    """
++    init_result = list(init_result)
++    if keep_loaded_values:
++        for index in (3, 6):  # inference_steps, shift
++            update = dict(init_result[index])
++            update.pop("value", None)
++            init_result[index] = update
++    return (*init_result, False)
 diff --git a/acestep/ui/gradio/events/results/generation_progress.py b/acestep/ui/gradio/events/results/generation_progress.py
 index d893541..47b064f 100644
 --- a/acestep/ui/gradio/events/results/generation_progress.py
@@ -215,7 +231,7 @@ index d893541..47b064f 100644
          saved_path = save_audio(
              audio_data=audio_tensor, output_path=audio_path,
 diff --git a/acestep/ui/gradio/events/wiring/generation_metadata_file_wiring.py b/acestep/ui/gradio/events/wiring/generation_metadata_file_wiring.py
-index e4c0fdd..b6f13b5 100644
+index e4c0fdd..d342194 100644
 --- a/acestep/ui/gradio/events/wiring/generation_metadata_file_wiring.py
 +++ b/acestep/ui/gradio/events/wiring/generation_metadata_file_wiring.py
 @@ -4,6 +4,7 @@ from typing import Any, Sequence
@@ -226,7 +242,7 @@ index e4c0fdd..b6f13b5 100644
  
  
  _LOAD_METADATA_GENERATION_OUTPUT_KEYS = (
-@@ -75,10 +76,24 @@ def register_generation_metadata_file_handlers(
+@@ -75,10 +76,25 @@ def register_generation_metadata_file_handlers(
      generation_section = context.generation_section
      llm_handler = context.llm_handler
  
@@ -250,6 +266,7 @@ index e4c0fdd..b6f13b5 100644
 +            generation_section["lm_model_path"],
 +            generation_section["vae_checkpoint"],
 +            context.results_section["keep_loaded_params_state"],
++            context.results_section["keep_params_on_init_state"],
 +        ],
      ).then(
          fn=gen_h.uncheck_auto_for_populated_fields,
@@ -292,18 +309,21 @@ index d9ca61c..5764a2c 100644
              generation_section["lyrics"],
              generation_section["bpm"],
 diff --git a/acestep/ui/gradio/events/wiring/generation_service_wiring.py b/acestep/ui/gradio/events/wiring/generation_service_wiring.py
-index ad06e74..972cbc6 100644
+index ad06e74..2b047c9 100644
 --- a/acestep/ui/gradio/events/wiring/generation_service_wiring.py
 +++ b/acestep/ui/gradio/events/wiring/generation_service_wiring.py
-@@ -9,6 +9,7 @@ from typing import Any
+@@ -9,6 +9,10 @@ from typing import Any
  import gradio as gr
  
  from .. import generation_handlers as gen_h
-+from ..results.filename_prefix import update_model_type_settings_keeping_loaded  # [local patch]
++from ..results.filename_prefix import (  # [local patch]
++    keep_loaded_values_after_init,
++    update_model_type_settings_keeping_loaded,
++)
  from ...i18n import get_i18n, reset_language_context, set_language_context
  from .context import (
      GenerationWiringContext,
-@@ -58,8 +59,12 @@ def register_generation_service_handlers(
+@@ -58,8 +62,12 @@ def register_generation_service_handlers(
      )
  
      generation_section["config_path"].change(
@@ -318,7 +338,7 @@ index ad06e74..972cbc6 100644
          outputs=[
              generation_section["inference_steps"],
              generation_section["guidance_scale"],
-@@ -71,6 +76,7 @@ def register_generation_service_handlers(
+@@ -71,6 +79,7 @@ def register_generation_service_handlers(
              generation_section["generation_mode"],
              generation_section["init_llm_checkbox"],
              generation_section["dcw_enabled"],
@@ -326,6 +346,33 @@ index ad06e74..972cbc6 100644
          ],
      )
  
+@@ -93,7 +102,9 @@ def register_generation_service_handlers(
+     )
+ 
+     init_event = generation_section["init_btn"].click(
+-        fn=lambda *args: gen_h.init_service_wrapper(dit_handler, llm_handler, *args),
++        fn=lambda *args: keep_loaded_values_after_init(  # [local patch]
++            gen_h.init_service_wrapper(dit_handler, llm_handler, *args[:-1]), args[-1]
++        ),
+         inputs=[
+             generation_section["checkpoint_dropdown"],
+             generation_section["config_path"],
+@@ -110,6 +121,7 @@ def register_generation_service_handlers(
+             generation_section["generation_mode"],
+             generation_section["batch_size_input"],
+             generation_section["vae_checkpoint"],
++            results_section["keep_params_on_init_state"],
+         ],
+         outputs=[
+             generation_section["init_status"],
+@@ -128,6 +140,7 @@ def register_generation_service_handlers(
+             generation_section["audio_duration"],
+             generation_section["batch_size_input"],
+             generation_section["think_checkbox"],
++            results_section["keep_params_on_init_state"],
+         ],
+     )
+     init_event.then(
 diff --git a/acestep/ui/gradio/interfaces/generation_tab_generate_controls.py b/acestep/ui/gradio/interfaces/generation_tab_generate_controls.py
 index 91fbe47..5d7574a 100644
 --- a/acestep/ui/gradio/interfaces/generation_tab_generate_controls.py
@@ -354,23 +401,26 @@ index 91fbe47..5d7574a 100644
          "autogen_checkbox": autogen_checkbox,
          "auto_lrc": auto_lrc,
 diff --git a/acestep/ui/gradio/interfaces/result.py b/acestep/ui/gradio/interfaces/result.py
-index 1a48914..c03a7ef 100644
+index 1a48914..87e7d39 100644
 --- a/acestep/ui/gradio/interfaces/result.py
 +++ b/acestep/ui/gradio/interfaces/result.py
-@@ -110,6 +110,8 @@ def create_results_section(dit_handler) -> dict:
+@@ -110,6 +110,10 @@ def create_results_section(dit_handler) -> dict:
          batch_queue = gr.State(value={})
          generation_params_state = gr.State(value={})
          is_generating_background = gr.State(value=False)
 +        # [local patch] True right after a JSON load changed the DiT dropdown
 +        keep_loaded_params_state = gr.State(value=False)
++        # [local patch] True after a JSON load selected other models (keep values on init)
++        keep_params_on_init_state = gr.State(value=False)
  
          # Row 1: samples 1-4
          with gr.Row():
-@@ -168,6 +170,7 @@ def create_results_section(dit_handler) -> dict:
+@@ -168,6 +172,8 @@ def create_results_section(dit_handler) -> dict:
          "total_batches": total_batches,
          "batch_queue": batch_queue,
          "generation_params_state": generation_params_state,
 +        "keep_loaded_params_state": keep_loaded_params_state,
++        "keep_params_on_init_state": keep_params_on_init_state,
          "is_generating_background": is_generating_background,
          "status_output": status_output,
          "prev_batch_btn": prev_batch_btn,
